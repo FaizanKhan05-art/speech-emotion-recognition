@@ -3,5 +3,5 @@ werkzeug
 numpy 
 librosa
 noisereduce
-tensorflow-cpu 
+tensorflow-cpu==2.13.0 
 gunicorn 
