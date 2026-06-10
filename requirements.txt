@@ -1,0 +1,7 @@
+flask>=2.3
+werkzeug>=2.3
+numpy>=1.24
+librosa>=0.10
+noisereduce>=2.0
+tensorflow>=2.12          # or tensorflow-cpu for lighter deploy
+gunicorn>=21              # for production (Render / HF Spaces)

@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Speech Emotion Recognition</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    /* ── Design tokens ────────────────────────────────────── */
+    :root {
+      --bg:        #0d0f14;
+      --surface:   #151820;
+      --card:      #1c2030;
+      --border:    #272c3d;
+      --accent:    #7c6af7;      /* violet – waveform energy */
+      --accent2:   #4fd1c5;      /* teal   – data readout    */
+      --danger:    #f87171;
+      --text:      #e8eaf0;
+      --muted:     #6b7280;
+      --radius:    14px;
+      --font-ui:   'Inter', system-ui, sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+    }
+
+    /* ── Reset ────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* ── Typography ──────────────────────────────────────── */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap');
+
+    /* ── Header ──────────────────────────────────────────── */
+    header {
+      width: 100%;
+      padding: 28px 40px 0;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .logo-mark {
+      width: 38px; height: 38px;
+      background: var(--accent);
+      border-radius: 10px;
+      display: grid; place-items: center;
+      font-size: 20px;
+    }
+    header h1 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    header span {
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-left: 6px;
+      font-family: var(--font-mono);
+    }
+
+    /* ── Main layout ─────────────────────────────────────── */
+    main {
+      width: 100%;
+      max-width: 720px;
+      padding: 48px 20px 64px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* ── Upload card ─────────────────────────────────────── */
+    .upload-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px;
+    }
+    .upload-card h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .upload-card p {
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-bottom: 24px;
+      line-height: 1.6;
+    }
+
+    /* Drop zone */
+    #drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: 10px;
+      padding: 40px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+    #drop-zone:hover,
+    #drop-zone.drag-over {
+      border-color: var(--accent);
+      background: rgba(124, 106, 247, 0.06);
+    }
+    #drop-zone input[type="file"] {
+      position: absolute; inset: 0;
+      opacity: 0; cursor: pointer;
+    }
+    .drop-icon { font-size: 2rem; margin-bottom: 10px; }
+    .drop-label {
+      font-size: 0.88rem; color: var(--muted);
+    }
+    .drop-label strong { color: var(--accent); }
+    #file-name {
+      margin-top: 8px;
+      font-size: 0.78rem;
+      font-family: var(--font-mono);
+      color: var(--accent2);
+      min-height: 1.2em;
+    }
+
+    /* Audio preview */
+    #audio-preview {
+      width: 100%;
+      margin-top: 16px;
+      accent-color: var(--accent);
+      display: none;
+    }
+
+    /* Submit button */
+    #analyze-btn {
+      margin-top: 20px;
+      width: 100%;
+      padding: 13px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 9px;
+      font-size: 0.92rem;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 0.01em;
+      transition: opacity .2s, transform .1s;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    #analyze-btn:hover:not(:disabled) { opacity: .88; }
+    #analyze-btn:active:not(:disabled) { transform: scale(.99); }
+    #analyze-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+    /* Spinner */
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2.5px solid rgba(255,255,255,.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      display: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Result card ─────────────────────────────────────── */
+    #result-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px 32px;
+      display: none;
+      animation: fadeUp .35s ease;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .result-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .result-label {
+      font-size: 0.72rem;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .emotion-name {
+      font-size: 2.4rem;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      color: var(--accent);
+      text-transform: capitalize;
+    }
+    .confidence-pill {
+      background: rgba(79, 209, 197, 0.12);
+      border: 1px solid rgba(79, 209, 197, 0.25);
+      color: var(--accent2);
+      padding: 6px 14px;
+      border-radius: 99px;
+      font-size: 0.88rem;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      white-space: nowrap;
+      align-self: center;
+    }
+
+    /* Chart */
+    .chart-label {
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--muted);
+      margin-bottom: 14px;
+    }
+    #chart-wrap {
+      position: relative;
+      height: 220px;
+    }
+
+    /* ── Error banner ─────────────────────────────────────── */
+    #error-banner {
+      background: rgba(248, 113, 113, 0.1);
+      border: 1px solid rgba(248, 113, 113, 0.3);
+      border-radius: 9px;
+      padding: 14px 18px;
+      font-size: 0.85rem;
+      color: var(--danger);
+      display: none;
+    }
+
+    /* ── Footer ──────────────────────────────────────────── */
+    footer {
+      margin-top: auto;
+      padding: 20px;
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo-mark">🎙️</div>
+  <div>
+    <h1>Speech Emotion Recognition<span>BiLSTM · MFCC</span></h1>
+  </div>
+</header>
+
+<main>
+
+  <!-- Upload card -->
+  <div class="upload-card">
+    <h2>Analyze a voice clip</h2>
+    <p>Upload a <strong style="color:var(--text)">.wav</strong> file and the model will identify the emotion in the speech using MFCC features and a bidirectional LSTM.</p>
+
+    <div id="drop-zone">
+      <input type="file" id="file-input" accept=".wav" />
+      <div class="drop-icon">📂</div>
+      <div class="drop-label"><strong>Choose a .wav file</strong> or drag it here</div>
+      <div id="file-name"></div>
+    </div>
+
+    <audio id="audio-preview" controls></audio>
+
+    <button id="analyze-btn" disabled>
+      <div class="spinner" id="spinner"></div>
+      <span id="btn-text">Analyze Emotion</span>
+    </button>
+  </div>
+
+  <!-- Error -->
+  <div id="error-banner"></div>
+
+  <!-- Result card -->
+  <div id="result-card">
+    <div class="result-header">
+      <div>
+        <div class="result-label">Detected Emotion</div>
+        <div class="emotion-name" id="emotion-out">—</div>
+      </div>
+      <div class="confidence-pill" id="conf-out">— %</div>
+    </div>
+    <div class="chart-label">Emotion Probabilities</div>
+    <div id="chart-wrap">
+      <canvas id="prob-chart"></canvas>
+    </div>
+  </div>
+
+</main>
+
+<footer>Speech Emotion Recognition · Flask + Librosa + TensorFlow/Keras</footer>
+
+<script>
+// ── Palette (matches CSS vars) ──────────────────────────────────────────────
+const ACCENT   = '#7c6af7';
+const ACCENT2  = '#4fd1c5';
+const SURFACE  = '#1c2030';
+const BORDER   = '#272c3d';
+const MUTED    = '#6b7280';
+const EMOTION_COLORS = {
+  angry:    '#f87171',
+  disgust:  '#fb923c',
+  fear:     '#a78bfa',
+  happy:    '#facc15',
+  neutral:  '#94a3b8',
+  sad:      '#60a5fa',
+  surprise: '#34d399',
+};
+
+// ── DOM refs ────────────────────────────────────────────────────────────────
+const dropZone   = document.getElementById('drop-zone');
+const fileInput  = document.getElementById('file-input');
+const fileName   = document.getElementById('file-name');
+const audioPreview = document.getElementById('audio-preview');
+const analyzeBtn = document.getElementById('analyze-btn');
+const spinner    = document.getElementById('spinner');
+const btnText    = document.getElementById('btn-text');
+const resultCard = document.getElementById('result-card');
+const emotionOut = document.getElementById('emotion-out');
+const confOut    = document.getElementById('conf-out');
+const errorBanner = document.getElementById('error-banner');
+
+let chartInstance = null;
+let selectedFile  = null;
+
+// ── Drag & drop ─────────────────────────────────────────────────────────────
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f) handleFile(f);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) handleFile(fileInput.files[0]);
+});
+
+function handleFile(f) {
+  if (!f.name.toLowerCase().endsWith('.wav')) {
+    showError('Please upload a .wav file.');
+    return;
+  }
+  selectedFile = f;
+  fileName.textContent = f.name;
+  audioPreview.src = URL.createObjectURL(f);
+  audioPreview.style.display = 'block';
+  analyzeBtn.disabled = false;
+  hideError();
+  resultCard.style.display = 'none';
+}
+
+// ── Analyze ─────────────────────────────────────────────────────────────────
+analyzeBtn.addEventListener('click', async () => {
+  if (!selectedFile) return;
+
+  setLoading(true);
+  hideError();
+  resultCard.style.display = 'none';
+
+  const formData = new FormData();
+  formData.append('audio', selectedFile);
+
+  try {
+    const res  = await fetch('/predict', { method: 'POST', body: formData });
+    const data = await res.json();
+
+    if (!res.ok || data.error) {
+      showError(data.error || `Server error (${res.status})`);
+      return;
+    }
+
+    renderResult(data);
+
+  } catch (err) {
+    showError('Network error — is the Flask server running?');
+  } finally {
+    setLoading(false);
+  }
+});
+
+// ── Render result ────────────────────────────────────────────────────────────
+function renderResult({ predicted_emotion, confidence, probabilities }) {
+  emotionOut.textContent = predicted_emotion;
+  emotionOut.style.color = EMOTION_COLORS[predicted_emotion] || ACCENT;
+  confOut.textContent    = `${confidence.toFixed(1)} %`;
+
+  const labels = Object.keys(probabilities);
+  const values = labels.map(l => +(probabilities[l] * 100).toFixed(2));
+  const colors = labels.map(l => EMOTION_COLORS[l] || ACCENT);
+
+  if (chartInstance) chartInstance.destroy();
+
+  const ctx = document.getElementById('prob-chart').getContext('2d');
+  chartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        data:            values,
+        backgroundColor: colors.map(c => c + '33'),   // 20% fill
+        borderColor:     colors,
+        borderWidth:     2,
+        borderRadius:    6,
+        borderSkipped:   false,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.parsed.y.toFixed(2)} %`,
+          },
+          backgroundColor: SURFACE,
+          borderColor:     BORDER,
+          borderWidth:     1,
+          titleColor:      '#fff',
+          bodyColor:       ACCENT2,
+          padding:         10,
+        },
+      },
+      scales: {
+        x: {
+          grid:  { color: BORDER },
+          ticks: { color: MUTED, font: { family: "'JetBrains Mono', monospace", size: 11 } },
+        },
+        y: {
+          min: 0, max: 100,
+          grid:  { color: BORDER },
+          ticks: {
+            color: MUTED,
+            font: { family: "'JetBrains Mono', monospace", size: 11 },
+            callback: v => v + '%',
+          },
+        },
+      },
+      animation: { duration: 600, easing: 'easeOutQuart' },
+    },
+  });
+
+  resultCard.style.display = 'block';
+  resultCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function setLoading(on) {
+  analyzeBtn.disabled = on;
+  spinner.style.display  = on ? 'block' : 'none';
+  btnText.textContent    = on ? 'Analyzing…' : 'Analyze Emotion';
+}
+function showError(msg) {
+  errorBanner.textContent = `⚠ ${msg}`;
+  errorBanner.style.display = 'block';
+}
+function hideError() {
+  errorBanner.style.display = 'none';
+}
+</script>
+</body>
+</html>
