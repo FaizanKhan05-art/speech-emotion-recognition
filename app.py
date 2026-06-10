@@ -8,6 +8,7 @@ from werkzeug.utils import secure_filename
 EMOTION_LABELS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
 MODEL_PATH     = os.path.join(os.path.dirname(__file__), "best_lstm_model.h5")
 UPLOAD_FOLDER  = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 ALLOWED_EXT    = {"wav"}
 
 app = Flask(__name__)
