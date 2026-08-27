@@ -1,7 +1,6 @@
 flask
 werkzeug
 numpy
-librosa
-noisereduce
+scipy
 scikit-learn
 gunicorn
