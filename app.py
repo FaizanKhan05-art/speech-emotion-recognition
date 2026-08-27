@@ -14,21 +14,86 @@ ALLOWED_EXT    = {"wav"}
 
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB cap
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 
-# ── Load model once at startup ───────────────────────────────────────────────
+# ── Load model + scaler at startup ───────────────────────────────────────────
 with open(MODEL_PATH, "rb") as f:
-    model = pickle.load(f)
+    bundle = pickle.load(f)
+model  = bundle["model"]
+scaler = bundle["scaler"]
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
 
-# ── Feature extraction ───────────────────────────────────────────────────────
+# ── Feature extraction using scipy (no librosa needed) ───────────────────────
 def extract_features(filepath):
-    import librosa
-    audio, sr = librosa.load(filepath, duration=3, offset=0.5)
-    mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=40)
-    return np.mean(mfcc.T, axis=0).reshape(1, -1)
+    import wave, struct, math
+    with wave.open(filepath, 'r') as wf:
+        sr = wf.getframerate()
+        n_frames = wf.getnframes()
+        raw = wf.readframes(n_frames)
+        samples = np.array(struct.unpack(f"{n_frames}h", raw[:n_frames*2]), dtype=float)
+
+    # Normalize
+    if np.max(np.abs(samples)) > 0:
+        samples = samples / np.max(np.abs(samples))
+
+    # Trim to 3 seconds
+    samples = samples[:sr * 3]
+    if len(samples) < sr * 3:
+        samples = np.pad(samples, (0, sr * 3 - len(samples)))
+
+    # Extract 40 MFCC-like features using DCT on mel filterbank
+    from scipy.fft import fft, dct
+    from scipy.signal import get_window
+
+    n_mfcc = 40
+    n_fft = 2048
+    hop = 512
+    n_mels = 128
+
+    # Pre-emphasis
+    samples = np.append(samples[0], samples[1:] - 0.97 * samples[:-1])
+
+    # Frame the signal
+    frames = []
+    for i in range(0, len(samples) - n_fft, hop):
+        frame = samples[i:i+n_fft] * get_window('hann', n_fft)
+        frames.append(frame)
+    frames = np.array(frames)
+
+    # Power spectrum
+    power = np.abs(np.fft.rfft(frames, n=n_fft)) ** 2
+
+    # Mel filterbank
+    fmin, fmax = 0, sr // 2
+    mel_min = 2595 * np.log10(1 + fmin / 700)
+    mel_max = 2595 * np.log10(1 + fmax / 700)
+    mel_points = np.linspace(mel_min, mel_max, n_mels + 2)
+    hz_points = 700 * (10 ** (mel_points / 2595) - 1)
+    bin_points = np.floor((n_fft + 1) * hz_points / sr).astype(int)
+
+    fbank = np.zeros((n_mels, n_fft // 2 + 1))
+    for m in range(1, n_mels + 1):
+        f_m_minus = bin_points[m - 1]
+        f_m = bin_points[m]
+        f_m_plus = bin_points[m + 1]
+        for k in range(f_m_minus, f_m):
+            if f_m != f_m_minus:
+                fbank[m-1, k] = (k - f_m_minus) / (f_m - f_m_minus)
+        for k in range(f_m, f_m_plus):
+            if f_m_plus != f_m:
+                fbank[m-1, k] = (f_m_plus - k) / (f_m_plus - f_m)
+
+    mel_energy = np.dot(power, fbank.T)
+    mel_energy = np.where(mel_energy == 0, np.finfo(float).eps, mel_energy)
+    log_mel = np.log(mel_energy)
+
+    # DCT to get MFCCs
+    mfcc = dct(log_mel, type=2, axis=1, norm='ortho')[:, :n_mfcc]
+    features = np.mean(mfcc, axis=0)  # (40,)
+
+    return scaler.transform(features.reshape(1, -1))
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 @app.route("/")
@@ -41,10 +106,8 @@ def predict():
         return jsonify({"error": "No audio file in request"}), 400
 
     file = request.files["audio"]
-
     if file.filename == "":
         return jsonify({"error": "Empty filename"}), 400
-
     if not allowed_file(file.filename):
         return jsonify({"error": "Only .wav files are supported"}), 415
 
@@ -54,8 +117,8 @@ def predict():
 
     try:
         features = extract_features(filepath)
-        probs = model.predict_proba(features)[0]
-        classes = model.classes_
+        probs    = model.predict_proba(features)[0]
+        classes  = model.classes_
 
         best_idx   = int(np.argmax(probs))
         predicted  = classes[best_idx]
