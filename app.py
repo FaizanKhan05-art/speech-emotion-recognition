@@ -27,45 +27,39 @@ def allowed_file(filename):
 
 # ── Feature extraction using scipy (no librosa needed) ───────────────────────
 def extract_features(filepath):
-    import wave, struct, math
+    import wave, struct
+    from scipy.fft import dct
+    from scipy.signal import get_window
+
     with wave.open(filepath, 'r') as wf:
         sr = wf.getframerate()
         n_frames = wf.getnframes()
         raw = wf.readframes(n_frames)
-        samples = np.array(struct.unpack(f"{n_frames}h", raw[:n_frames*2]), dtype=float)
+        n = min(n_frames, len(raw) // 2)
+        samples = np.array(struct.unpack(f"{n}h", raw[:n*2]), dtype=float)
 
-    # Normalize
     if np.max(np.abs(samples)) > 0:
         samples = samples / np.max(np.abs(samples))
 
-    # Trim to 3 seconds
     samples = samples[:sr * 3]
     if len(samples) < sr * 3:
         samples = np.pad(samples, (0, sr * 3 - len(samples)))
 
-    # Extract 40 MFCC-like features using DCT on mel filterbank
-    from scipy.fft import fft, dct
-    from scipy.signal import get_window
+    samples = np.append(samples[0], samples[1:] - 0.97 * samples[:-1])
 
     n_mfcc = 40
     n_fft = 2048
     hop = 512
     n_mels = 128
 
-    # Pre-emphasis
-    samples = np.append(samples[0], samples[1:] - 0.97 * samples[:-1])
-
-    # Frame the signal
     frames = []
     for i in range(0, len(samples) - n_fft, hop):
         frame = samples[i:i+n_fft] * get_window('hann', n_fft)
         frames.append(frame)
     frames = np.array(frames)
 
-    # Power spectrum
     power = np.abs(np.fft.rfft(frames, n=n_fft)) ** 2
 
-    # Mel filterbank
     fmin, fmax = 0, sr // 2
     mel_min = 2595 * np.log10(1 + fmin / 700)
     mel_max = 2595 * np.log10(1 + fmax / 700)
@@ -89,10 +83,16 @@ def extract_features(filepath):
     mel_energy = np.where(mel_energy == 0, np.finfo(float).eps, mel_energy)
     log_mel = np.log(mel_energy)
 
-    # DCT to get MFCCs
     mfcc = dct(log_mel, type=2, axis=1, norm='ortho')[:, :n_mfcc]
-    features = np.mean(mfcc, axis=0)  # (40,)
+    mfcc_mean = np.mean(mfcc, axis=0)      # 40
+    mfcc_delta = np.mean(np.diff(mfcc, axis=0), axis=0)   # 40
+    mfcc_delta2 = np.mean(np.diff(mfcc, n=2, axis=0), axis=0)  # 40
 
+    zcr = np.array([np.mean(np.abs(np.diff(np.sign(samples))))/2])  # 1
+    ste = np.array([np.mean(samples**2)])  # 1
+    pitch = np.array([0.0, 0.0, 0.0])  # 3
+
+    features = np.concatenate([mfcc_mean, mfcc_delta, mfcc_delta2, pitch, ste, zcr])  # 125
     return scaler.transform(features.reshape(1, -1))
 
 # ── Routes ───────────────────────────────────────────────────────────────────
